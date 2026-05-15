@@ -37,8 +37,8 @@ from src.core.notifier import send_notification
 # Configuration
 START_TIME = "15:59:30"
 EXCLUDED_PERSONS = {"jilani", "malaika"}
-VERIFY_INTERVAL_SEC = 2
-VERIFY_DURATION_SEC = 6
+VERIFY_INTERVAL_SEC = 1
+VERIFY_DURATION_SEC = 3
 MATCH_THRESHOLD = 0.5
 FACE_CONFIDENCE_THRESHOLD = 0.3
 
@@ -270,9 +270,6 @@ class NotificationDemo:
 
                     if confirmed_person in EXCLUDED_PERSONS:
                         logger.info(f"[{time_str}] ❌ {confirmed_person} - EXCLUDED")
-                        self.log_to_db(person_id, time_str, self.frame_number, state["entry_type"],
-                                      checks, verified_as=confirmed_person, notified=0,
-                                      reason_skipped="EXCLUDED")
                     else:
                         logger.info(f"[{time_str}] ✅ {confirmed_person} - NOTIFIED")
                         if not self.dry_run:
@@ -283,8 +280,6 @@ class NotificationDemo:
                     self.entry_confirmed_persons.add(confirmed_person)
                 else:
                     logger.info(f"[{time_str}] ❌ UNCLEAR - {checks_lower}")
-                    self.log_to_db(state["person_id"], time_str, self.frame_number, state["entry_type"],
-                                  checks, reason_skipped="UNCLEAR")
 
                 del self.pending_verifications[track_id]
 
