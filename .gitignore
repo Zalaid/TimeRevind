@@ -1,0 +1,101 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Virtual environments
+venv/
+env/
+ENV/
+time/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Database files
+db/*.db
+db/*.sqlite
+db/*.sqlite3
+surveillance.db
+
+# Model files (large)
+*.pt
+models/
+
+# Video files
+videos/
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.flv
+
+# Generated/temporary files
+tts_cache/
+logs/
+best_one/
+embedding_frames/
+debug_frames/
+manual_labels_output/
+
+# Cache and testing
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE specific
+.pytest_ini
+.vscode/settings.json
+
+# OS files
+.DS_Store
+Thumbs.db
+*.lnk
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# Log files
+*.log
+logs/
+
+# IDE and debugging
+.vscode/
+.idea/
+*.iml
+
+# Project specific
+latest_frame.jpg
+*.jpg
+*.jpeg
+*.png
+.claude/
+
+# Node modules (if used for frontend)
+node_modules/
+npm-debug.log

@@ -1,0 +1,62 @@
+# TimeRevind Requirements
+# AI-powered surveillance system with person detection, tracking, and behavior analysis
+
+# ============================================================================
+# CORE DEPENDENCIES
+# ============================================================================
+
+# Vision & Detection
+ultralytics>=8.0.0              # YOLOv8/YOLOv11 object detection and pose estimation
+opencv-python>=4.8.0           # Computer vision and image processing
+torch>=2.0.0                    # PyTorch (GPU acceleration for models)
+torchvision>=0.15.0            # Vision models and utilities
+
+# Face & Body Recognition
+onnxruntime>=1.17.0            # ONNX Runtime for SCRFD face detection and ArcFace embeddings
+onnx>=1.15.0                   # ONNX model format support
+
+# ============================================================================
+# API & WEB FRAMEWORK
+# ============================================================================
+
+fastapi>=0.104.0               # Modern async web API framework
+uvicorn>=0.24.0                # ASGI server for FastAPI
+pydantic>=2.0.0                # Data validation and serialization
+python-dotenv>=1.0.0           # Load environment variables from .env
+
+# ============================================================================
+# DATABASE & VECTOR SEARCH
+# ============================================================================
+
+qdrant-client>=2.7.0           # Qdrant vector database client
+numpy>=1.24.0                  # Numerical computing
+scipy>=1.11.0                  # Scientific computing
+
+# ============================================================================
+# SPEECH & VOICE (for voice query feature in API)
+# ============================================================================
+
+groq>=0.4.0                    # Groq API for LLM-based query processing
+openwakeword>=0.5.0            # Open-source wake word detection
+pyaudio>=0.2.13                # Microphone audio input
+gtts>=2.3.2                    # Google Text-to-Speech (free)
+
+# ============================================================================
+# UTILITIES & TOOLS
+# ============================================================================
+
+requests>=2.31.0               # HTTP client library
+Pillow>=10.0.0                 # Image processing
+
+# ============================================================================
+# OPTIONAL DEPENDENCIES
+# ============================================================================
+
+# For GPU acceleration (ensure CUDA/cuDNN compatible versions)
+# torch-cuda (handled separately based on CUDA version)
+
+# For advanced TTS (optional)
+# elevenlabs>=0.2.0            # Premium voice synthesis
+
+# For monitoring and observability (optional)
+# prometheus-client>=0.18.0     # Prometheus metrics
