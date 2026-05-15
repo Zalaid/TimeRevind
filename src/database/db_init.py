@@ -107,6 +107,20 @@ class DatabaseManager:
                     FOREIGN KEY (person_id) REFERENCES person_profiles(person_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS notification_logs (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id           TEXT NOT NULL,
+                    simulated_time      TEXT NOT NULL,
+                    video_frame         INTEGER NOT NULL,
+                    entry_type          TEXT NOT NULL CHECK(entry_type IN ('ENTRY', 'RE_ENTRY')),
+                    verification_checks TEXT NOT NULL,
+                    verified_as         TEXT DEFAULT NULL,
+                    notified            INTEGER NOT NULL DEFAULT 0,
+                    reason_skipped      TEXT DEFAULT NULL,
+                    video_file          TEXT DEFAULT NULL,
+                    created_at          TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_events_person       ON events(person_id);
                 CREATE INDEX IF NOT EXISTS idx_events_session      ON events(session_id);
                 CREATE INDEX IF NOT EXISTS idx_events_type         ON events(event_type);
@@ -119,6 +133,8 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_profiles_name       ON person_profiles(name);
                 CREATE INDEX IF NOT EXISTS idx_profiles_last_seen  ON person_profiles(last_seen);
                 CREATE INDEX IF NOT EXISTS idx_embedding_person    ON embedding_metadata(person_id);
+                CREATE INDEX IF NOT EXISTS idx_notif_person        ON notification_logs(person_id);
+                CREATE INDEX IF NOT EXISTS idx_notif_time          ON notification_logs(simulated_time);
             """)
 
             conn.commit()
