@@ -208,18 +208,27 @@ class NotificationDemo:
             logger.debug(f"YOLO error: {e}")
             return True
 
-        # Queue detections for embedding
+        # Queue detections for embedding (smart queuing: only queue if new or needs re-verify)
+        now_time = time.time()
         for track_id, bbox in zip(track_ids_raw, detections):
             x1, y1, x2, y2 = [int(v) for v in bbox]
             x1, y1 = max(0, x1), max(0, y1)
             x2 = min(frame.shape[1], x2)
             y2 = min(frame.shape[0], y2)
 
-            crop = frame[y1:y2, x1:x2]
-            if crop.size > 0:
-                with self.embedding_lock:
-                    if track_id not in self.queued_track_ids:
-                        self.embedding_queue.put((track_id, crop, self.frame_number, current_time))
+            with self.embedding_lock:
+                already_matched = track_id in self.matched_tracks
+                already_queued = track_id in self.queued_track_ids
+                match_time = self.matched_tracks.get(track_id, (None, None, 0))[2] if already_matched else 0
+
+            # Only queue if: not yet matched, or matched but needs re-verify (2+ sec interval)
+            needs_reverify = (already_matched and (now_time - match_time) >= VERIFY_INTERVAL_SEC)
+
+            if not already_queued and (not already_matched or needs_reverify):
+                crop = frame[y1:y2, x1:x2]
+                if crop.size > 0:
+                    self.embedding_queue.put((track_id, crop, self.frame_number, current_time))
+                    with self.embedding_lock:
                         self.queued_track_ids.add(track_id)
 
         # Loop 1: Update verification state from matched tracks
@@ -240,6 +249,9 @@ class NotificationDemo:
                 logger.info(f"[{time_str}] Starting verification for track {track_id}: {person_id}")
             else:
                 state = self.pending_verifications[track_id]
+                # Stop re-checking after 3 checks
+                if len(state["checks"]) >= 3:
+                    continue
                 if (self.frame_number - state["last_check_frame"]) / self.fps >= VERIFY_INTERVAL_SEC:
                     state["checks"].append(person_id)
                     state["last_check_frame"] = self.frame_number
@@ -251,36 +263,44 @@ class NotificationDemo:
             seconds_since_start = frames_since_start / self.fps
 
             if seconds_since_start >= VERIFY_DURATION_SEC and len(state["checks"]) >= 3:
+                from collections import Counter
+
                 checks = state["checks"]
                 checks_lower = [c.lower() for c in checks]
-                unique_persons = set(checks_lower)
-                person_id = state["person_id"]
 
-                if len(unique_persons) == 1:
-                    confirmed_person = checks_lower[0]
+                # Majority vote instead of requiring unanimous agreement
+                vote_counts = Counter(checks_lower)
+                confirmed_person, top_votes = vote_counts.most_common(1)[0]
+                total_votes = len(checks_lower)
+                confidence = top_votes / total_votes
 
-                    if confirmed_person in self.entry_confirmed_persons:
-                        del self.pending_verifications[track_id]
-                        continue
+                logger.info(f"[{time_str}] Vote result: {dict(vote_counts)} → {confirmed_person} ({confidence:.0%})")
 
-                    # Wait until after 4 PM to send notification (but keep verification pending)
-                    if not after_4pm:
-                        logger.debug(f"[{time_str}] Verified {confirmed_person} but before 4 PM — waiting")
-                        continue
+                # Require at least 60% agreement to confirm
+                if confidence < 0.6:
+                    logger.info(f"[{time_str}] ❌ UNCLEAR - low confidence {confidence:.0%}: {checks_lower}")
+                    del self.pending_verifications[track_id]
+                    continue
 
-                    if confirmed_person in EXCLUDED_PERSONS:
-                        logger.info(f"[{time_str}] ❌ {confirmed_person} - EXCLUDED")
-                    else:
-                        logger.info(f"[{time_str}] ✅ {confirmed_person} - NOTIFIED")
-                        if not self.dry_run:
-                            send_notification(confirmed_person, time_str, state["entry_type"])
-                        self.log_to_db(confirmed_person, time_str, self.frame_number, state["entry_type"],
-                                      checks, verified_as=confirmed_person, notified=1)
+                if confirmed_person in self.entry_confirmed_persons:
+                    del self.pending_verifications[track_id]
+                    continue
 
-                    self.entry_confirmed_persons.add(confirmed_person)
+                # Wait until after 4 PM to send notification (but keep verification pending)
+                if not after_4pm:
+                    logger.debug(f"[{time_str}] Verified {confirmed_person} but before 4 PM — waiting")
+                    continue
+
+                if confirmed_person in EXCLUDED_PERSONS:
+                    logger.info(f"[{time_str}] ❌ {confirmed_person} - EXCLUDED")
                 else:
-                    logger.info(f"[{time_str}] ❌ UNCLEAR - {checks_lower}")
+                    logger.info(f"[{time_str}] ✅ {confirmed_person} - NOTIFIED ({confidence:.0%} confidence)")
+                    if not self.dry_run:
+                        send_notification(confirmed_person, time_str, state["entry_type"])
+                    self.log_to_db(confirmed_person, time_str, self.frame_number, state["entry_type"],
+                                  checks, verified_as=confirmed_person, notified=1)
 
+                self.entry_confirmed_persons.add(confirmed_person)
                 del self.pending_verifications[track_id]
 
         return True
