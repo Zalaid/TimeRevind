@@ -116,21 +116,26 @@ class NotificationDemoInstant:
                 # Search Qdrant
                 try:
                     results = self.embedding_store.search_face_embedding(embedding, top_k=1)
+
+                    is_unknown = False
                     if not results["metadatas"] or not results["metadatas"][0]:
-                        continue
+                        is_unknown = True
+                    else:
+                        person_id = results["metadatas"][0][0].get("person_id")
+                        distance = results["distances"][0][0]
+                        if person_id is None or distance > MATCH_THRESHOLD:
+                            is_unknown = True
 
-                    person_id = results["metadatas"][0][0].get("person_id")
-                    distance = results["distances"][0][0]
-
-                    if person_id is None or distance > MATCH_THRESHOLD:
-                        continue
-
-                    # Store match
-                    with self.embedding_lock:
-                        self.matched_tracks[track_id] = (person_id, distance, time.time())
-                        self.queued_track_ids.discard(track_id)
-
-                    logger.info(f"[MATCH] Track {track_id}: {person_id} @ {current_time.strftime('%H:%M:%S')} (dist={distance:.4f})")
+                    if is_unknown:
+                        with self.embedding_lock:
+                            self.matched_tracks[track_id] = (f"unknown_{track_id}", 1.0, time.time())
+                            self.queued_track_ids.discard(track_id)
+                        logger.info(f"[WORKER] Track {track_id}: UNKNOWN person @ {current_time.strftime('%H:%M:%S')}")
+                    else:
+                        with self.embedding_lock:
+                            self.matched_tracks[track_id] = (person_id, distance, time.time())
+                            self.queued_track_ids.discard(track_id)
+                        logger.info(f"[MATCH] Track {track_id}: {person_id} @ {current_time.strftime('%H:%M:%S')} (dist={distance:.4f})")
 
                 except Exception as e:
                     logger.debug(f"[WORKER] Qdrant error: {e}")
@@ -169,6 +174,46 @@ class NotificationDemoInstant:
         except Exception as e:
             logger.error(f"Database error: {e}")
 
+    def _draw_boxes(self, frame_display, track_ids, bboxes, matched_items, queued_ids, after_4pm):
+        """Draw YOLO bounding boxes with identity labels on frame."""
+        for track_id, bbox in zip(track_ids, bboxes):
+            x1, y1, x2, y2 = bbox
+
+            match = matched_items.get(track_id)
+            is_queued = track_id in queued_ids
+
+            if match is None:
+                if is_queued:
+                    color = (0, 255, 255)   # yellow — identifying
+                    label = f"Track #{track_id} | Identifying..."
+                else:
+                    color = (128, 128, 128)  # grey — no face detected
+                    label = f"Track #{track_id} | No face"
+            else:
+                person_id, distance, _ = match
+                person_id_lower = person_id.lower()
+                is_unknown = person_id_lower.startswith("unknown_")
+
+                if is_unknown:
+                    color = (0, 0, 255)      # red — unknown intruder
+                    label = f"UNKNOWN #{track_id} | ALERT"
+                elif person_id_lower in EXCLUDED_PERSONS:
+                    color = (0, 255, 0)      # green — excluded/safe
+                    label = f"{person_id.upper()} | Excluded"
+                else:
+                    color = (255, 100, 0)    # blue — known, notified
+                    label = f"{person_id.upper()} | Notified"
+
+            # Draw box
+            cv2.rectangle(frame_display, (x1, y1), (x2, y2), color, 2)
+
+            # Draw label background
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+            label_y = max(y1 - 6, th + 4)
+            cv2.rectangle(frame_display, (x1, label_y - th - 4), (x1 + tw + 4, label_y + 2), color, -1)
+            cv2.putText(frame_display, label, (x1 + 2, label_y - 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+
     def process_frame(self):
         """Process single frame."""
         ret, frame = self.cap.read()
@@ -180,43 +225,32 @@ class NotificationDemoInstant:
         time_str = current_time.strftime("%H:%M:%S")
         after_4pm = self.is_after_4pm(current_time)
 
-        # Display frame
-        frame_display = frame.copy()
-        cv2.putText(frame_display, f"Frame: {self.frame_number}/{self.total_frames}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame_display, f"Time: {time_str}", (10, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.imshow("TimeRevind Demo (Instant) - Press Q to quit", frame_display)
-
-        # Press Q to quit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            return False
-
         # YOLO detection with tracking
+        track_ids_raw = []
+        bboxes_clipped = []
         try:
-            results = self.yolo.track(frame, persist=True, verbose=False, conf=0.3)
-            if results[0].boxes.id is None:
-                return True
-            track_ids_raw = results[0].boxes.id.int().cpu().tolist()
-            detections = results[0].boxes.xyxy.cpu().numpy()
+            results = self.yolo.track(frame, persist=True, verbose=False, conf=0.3, classes=[0])
+            if results[0].boxes.id is not None:
+                track_ids_raw = results[0].boxes.id.int().cpu().tolist()
+                for bbox in results[0].boxes.xyxy.cpu().numpy():
+                    x1, y1, x2, y2 = [int(v) for v in bbox]
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2 = min(frame.shape[1], x2)
+                    y2 = min(frame.shape[0], y2)
+                    bboxes_clipped.append((x1, y1, x2, y2))
         except Exception as e:
             logger.debug(f"YOLO error: {e}")
-            return True
 
         # Queue detections for embedding (smart queuing)
         now_time = time.time()
-        for track_id, bbox in zip(track_ids_raw, detections):
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            x1, y1 = max(0, x1), max(0, y1)
-            x2 = min(frame.shape[1], x2)
-            y2 = min(frame.shape[0], y2)
+        for track_id, bbox in zip(track_ids_raw, bboxes_clipped):
+            x1, y1, x2, y2 = bbox
 
             with self.embedding_lock:
                 already_matched = track_id in self.matched_tracks
                 already_queued = track_id in self.queued_track_ids
                 match_time = self.matched_tracks.get(track_id, (None, None, 0))[2] if already_matched else 0
 
-            # Only queue if new or needs re-verify (2 sec interval)
             needs_reverify = (already_matched and (now_time - match_time) >= 2.0)
 
             if not already_queued and (not already_matched or needs_reverify):
@@ -229,30 +263,49 @@ class NotificationDemoInstant:
         # Process matches — instant notification for non-excluded persons
         with self.embedding_lock:
             matched_items = dict(self.matched_tracks)
+            queued_ids = set(self.queued_track_ids)
 
         for track_id, (person_id, distance, match_time) in matched_items.items():
             person_id_lower = person_id.lower()
 
-            # Skip before 4pm
             if not after_4pm:
                 continue
 
-            # Check if already notified this person
             if person_id_lower in self.notified_persons:
                 continue
 
-            # Excluded persons
-            if person_id_lower in EXCLUDED_PERSONS:
+            is_unknown = person_id_lower.startswith("unknown_")
+
+            if is_unknown:
+                logger.info(f"[{time_str}] UNKNOWN intruder (track {track_id}) - NOTIFIED")
+                if not self.dry_run:
+                    send_notification(f"Unknown Person (track {track_id})", time_str, "ENTRY")
+                self.log_to_db(f"unknown_{track_id}", time_str, self.frame_number, "ENTRY", notified=1)
+                self.notified_persons.add(person_id_lower)
+
+            elif person_id_lower in EXCLUDED_PERSONS:
                 logger.info(f"[{time_str}] ❌ {person_id_lower} - EXCLUDED")
                 self.notified_persons.add(person_id_lower)
-                continue
 
-            # Non-excluded: send notification immediately
-            logger.info(f"[{time_str}] ✅ {person_id_lower} - NOTIFIED (instant)")
-            if not self.dry_run:
-                send_notification(person_id_lower, time_str, "ENTRY")
-            self.log_to_db(person_id_lower, time_str, self.frame_number, "ENTRY", notified=1)
-            self.notified_persons.add(person_id_lower)
+            else:
+                logger.info(f"[{time_str}] ✅ {person_id_lower} - NOTIFIED (instant)")
+                if not self.dry_run:
+                    send_notification(person_id_lower, time_str, "ENTRY")
+                self.log_to_db(person_id_lower, time_str, self.frame_number, "ENTRY", notified=1)
+                self.notified_persons.add(person_id_lower)
+
+        # Draw frame with boxes and HUD
+        frame_display = frame.copy()
+        self._draw_boxes(frame_display, track_ids_raw, bboxes_clipped, matched_items, queued_ids, after_4pm)
+
+        status_color = (0, 200, 255) if after_4pm else (200, 200, 200)
+        status_text = "MONITORING ACTIVE" if after_4pm else "Waiting for 4 PM..."
+        cv2.putText(frame_display, f"Frame: {self.frame_number}/{self.total_frames}  |  Time: {time_str}  |  {status_text}",
+                    (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2, cv2.LINE_AA)
+
+        cv2.imshow("TimeRevind Demo (Instant) - Press Q to quit", frame_display)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            return False
 
         return True
 

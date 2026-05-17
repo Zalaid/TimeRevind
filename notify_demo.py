@@ -44,24 +44,32 @@ FACE_CONFIDENCE_THRESHOLD = 0.3
 
 
 class NotificationDemo:
-    def __init__(self, video_path: str, dry_run: bool = False):
-        """Initialize demo with video file and database."""
-        self.video_path = Path(video_path)
+    def __init__(self, source, dry_run: bool = False):
+        """Initialize demo with video file or camera ID."""
         self.dry_run = dry_run
+        self.is_camera = isinstance(source, int)
 
-        if not self.video_path.exists():
-            raise FileNotFoundError(f"Video not found: {video_path}")
+        if self.is_camera:
+            self.source_label = f"camera_{source}"
+            logger.info(f"Opening camera {source}...")
+            self.cap = cv2.VideoCapture(source)
+        else:
+            self.video_path = Path(source)
+            self.source_label = self.video_path.name
+            if not self.video_path.exists():
+                raise FileNotFoundError(f"Video not found: {source}")
+            logger.info(f"Loading video: {self.video_path.name}")
+            self.cap = cv2.VideoCapture(str(self.video_path))
 
-        # Load video
-        logger.info(f"Loading video: {self.video_path.name}")
-        self.cap = cv2.VideoCapture(str(self.video_path))
         if not self.cap.isOpened():
-            logger.error(f"❌ Failed to open video: {self.video_path}")
-            raise RuntimeError(f"Failed to open video: {video_path}")
+            raise RuntimeError(f"Failed to open source: {source}")
 
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        logger.info(f"Video: {self.total_frames} frames @ {self.fps:.1f} fps")
+        if self.is_camera:
+            logger.info(f"Camera ready @ {self.fps:.1f} fps")
+        else:
+            logger.info(f"Video: {self.total_frames} frames @ {self.fps:.1f} fps")
 
         # Load YOLO
         logger.info("Loading YOLO model...")
@@ -75,9 +83,10 @@ class NotificationDemo:
         logger.info("Initializing database...")
         self.db_manager, self.embedding_store = initialize_databases()
 
-        # Parse start time
-        start_dt = datetime.strptime(START_TIME, "%H:%M:%S")
-        self.start_datetime = start_dt.replace(year=2026, month=5, day=16)
+        # Simulated time only used for video mode
+        if not self.is_camera:
+            start_dt = datetime.strptime(START_TIME, "%H:%M:%S")
+            self.start_datetime = start_dt.replace(year=2026, month=5, day=16)
 
         # State tracking
         self.pending_verifications = {}
@@ -146,7 +155,9 @@ class NotificationDemo:
                 logger.error(f"[WORKER] Error: {e}")
 
     def get_current_time(self, frame_num: int) -> datetime:
-        """Get simulated current time based on frame number."""
+        """Real wall-clock time for camera; simulated frame-based time for video."""
+        if self.is_camera:
+            return datetime.now()
         elapsed_seconds = frame_num / self.fps
         return self.start_datetime + timedelta(seconds=elapsed_seconds)
 
@@ -168,7 +179,7 @@ class NotificationDemo:
             params = (
                 person_id, simulated_time, frame_num, entry_type,
                 json.dumps(verification_checks), verified_as, notified,
-                reason_skipped, str(self.video_path)
+                reason_skipped, self.source_label
             )
             self.db_manager.execute(sql, params)
         except Exception as e:
@@ -187,10 +198,11 @@ class NotificationDemo:
 
         # Display frame
         frame_display = frame.copy()
-        cv2.putText(frame_display, f"Frame: {self.frame_number}/{self.total_frames}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame_display, f"Time: {time_str}", (10, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        hud_top = f"Camera | Time: {time_str}" if self.is_camera else f"Frame: {self.frame_number}/{self.total_frames} | Time: {time_str}"
+        status = "MONITORING ACTIVE" if after_4pm else "Waiting for 4 PM..."
+        status_color = (0, 200, 255) if after_4pm else (180, 180, 180)
+        cv2.putText(frame_display, hud_top, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame_display, status, (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.65, status_color, 2)
         cv2.imshow("TimeRevind Demo - Press Q to quit", frame_display)
 
         # Press Q to quit
@@ -330,13 +342,16 @@ class NotificationDemo:
 
 def main():
     parser = argparse.ArgumentParser(description="TimeRevind Demo Notification System")
-    parser.add_argument("--video", required=True, help="Path to video file")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--video",  type=str, help="Path to video file")
+    group.add_argument("--camera", type=int, help="Camera device ID (e.g. 0)")
     parser.add_argument("--dry-run", action="store_true", help="Log only, don't send notifications")
 
     args = parser.parse_args()
+    source = args.camera if args.camera is not None else args.video
 
     try:
-        demo = NotificationDemo(args.video, dry_run=args.dry_run)
+        demo = NotificationDemo(source, dry_run=args.dry_run)
         demo.run()
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)

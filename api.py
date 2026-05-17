@@ -224,7 +224,7 @@ _SCHEMA_DESCRIPTION = """
 DATABASE SCHEMA (SQLite — timerevind.db):
 
 === TABLE: person_profiles ===
-COLUMNS:
+COLUMNS:    
 - person_id (TEXT, PRIMARY KEY): Unique ID like "Person_1", "person_002"
 - name (TEXT, nullable): Human label like "John Doe", "Zelaid". NULL if unnamed
 - first_seen (TIMESTAMP): Very first moment person was detected across all sessions

@@ -290,14 +290,19 @@ class QdrantTestMatcher:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         self.fps = fps if fps > 0 else 30.0
-        self.video_file = os.path.basename(video_path)
+        self.video_file = os.path.basename(video_path) if isinstance(video_path, str) else f"camera_{video_path}"
         self.db_manager.execute(
             "UPDATE sessions SET video_file = ? WHERE session_id = ?",
             (self.video_file, self.session_id)
         )
 
-        logger.info(f"Video: {width}x{height} @ {fps:.1f} FPS, {total} frames")
-        logger.info("Keyboard: [a/f] +-10 frames | [w/e] +-100 frames | [q] Quit\n")
+        is_camera = isinstance(video_path, int)
+        if is_camera:
+            logger.info(f"Camera {video_path}: {width}x{height} @ {fps:.1f} FPS (live)")
+            logger.info("Keyboard: [q] Quit\n")
+        else:
+            logger.info(f"Video: {width}x{height} @ {fps:.1f} FPS, {total} frames")
+            logger.info("Keyboard: [a/f] +-10 frames | [w/e] +-100 frames | [q] Quit\n")
 
         out = None
         if output_path:
@@ -682,16 +687,21 @@ class QdrantTestMatcher:
 
 def main():
     parser = argparse.ArgumentParser(description="Test: Real Qdrant matching")
-    parser.add_argument("--video", type=str, required=True, help="Video path")
-    parser.add_argument("--output", type=str, default=None, help="Output path")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--video",  type=str, help="Video file path")
+    group.add_argument("--camera", type=int, help="Camera device ID (e.g. 0)")
+    parser.add_argument("--output", type=str, default=None, help="Output path (video mode only)")
     args = parser.parse_args()
 
-    if not Path(args.video).exists():
-        logger.error("Video not found")
-        sys.exit(1)
-
     matcher = QdrantTestMatcher()
-    matcher.process_video(str(args.video), args.output)
+
+    if args.video:
+        if not Path(args.video).exists():
+            logger.error("Video not found")
+            sys.exit(1)
+        matcher.process_video(str(args.video), args.output)
+    else:
+        matcher.process_video(args.camera, args.output)
 
 
 if __name__ == "__main__":
