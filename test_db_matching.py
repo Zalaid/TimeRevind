@@ -208,6 +208,22 @@ class QdrantTestMatcher:
             return None, None
 
 
+    def _get_gender(self, person_id: str) -> str:
+        """Return gender label from person_profiles DB."""
+        try:
+            rows = self.db_manager.query(
+                "SELECT gender FROM person_profiles WHERE person_id = ?", (person_id,)
+            )
+            if rows and rows[0][0]:
+                g = rows[0][0].strip().upper()
+                if g in ("M", "MALE"):
+                    return "Male"
+                if g in ("F", "FEMALE"):
+                    return "Female"
+        except Exception:
+            pass
+        return ""
+
     def detect(self, frame):
         """YOLO detection"""
         results = self.yolo.track(
@@ -216,7 +232,8 @@ class QdrantTestMatcher:
             iou=YOLO_CONFIDENCE_THRESHOLD,
             persist=True,
             tracker="bytetrack.yaml",
-            verbose=False
+            verbose=False,
+            classes=[0]
         )
 
         detections = []
@@ -525,14 +542,21 @@ class QdrantTestMatcher:
 
                     if matched_id:
                         if matched_id in self.matched_db_people_this_frame:
-                            # Duplicate in same frame — draw YELLOW, skip DB logging
                             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 1)
                         else:
-                            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            cv2.putText(
-                                annotated, matched_id, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2
-                            )
+                            gender = self._get_gender(matched_id)
+                            label = f"{matched_id}  |  {gender}" if gender else matched_id
+                            color = (0, 255, 0)
+                            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+                            if y1 - th - 10 >= 0:
+                                cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 8, y1), color, -1)
+                                cv2.putText(annotated, label, (x1 + 4, y1 - 6),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+                            else:
+                                cv2.rectangle(annotated, (x1, y1), (x1 + tw + 8, y1 + th + 10), color, -1)
+                                cv2.putText(annotated, label, (x1 + 4, y1 + th + 4),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
                             self.matched_db_people_this_frame.add(matched_id)
                             match_count += 1
 
