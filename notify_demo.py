@@ -51,7 +51,7 @@ class NotificationDemo:
 
         if self.is_camera:
             self.source_label = f"camera_{source}"
-            logger.info(f"Opening camera {source}...")
+            logger.info(f"Opening camera {source}")
             self.cap = cv2.VideoCapture(source)
         else:
             self.video_path = Path(source)
@@ -137,7 +137,7 @@ class NotificationDemo:
 
                     if person_id is None or distance > MATCH_THRESHOLD:
                         continue
-
+                    
                     # Store match
                     with self.embedding_lock:
                         self.matched_tracks[track_id] = (person_id, distance, time.time())
